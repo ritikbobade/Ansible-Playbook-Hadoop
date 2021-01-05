@@ -1,0 +1,139 @@
+- hosts: MasterNode, DataNodes
+  vars:
+       - jdk_file_name: "jdk-8u171-linux-x64.rpm"
+       - hadoop_file_name: "hadoop-1.2.1-1.x86_64.rpm"
+
+  tasks:
+       - name: "Copy JDK"
+         copy: 
+             src: "/root/{{ jdk_file_name }}"
+             dest: "/root/"
+       - name: "Copy Hadoop"
+         copy:
+             src: "/root/{{ hadoop_file_name }}"
+             dest: "/root/"
+
+       - block:
+            - name: "Installing JDK"
+              command: "rpm -ivh {{ jdk_file_name }}"
+              register: java
+
+            - debug:
+                var: java.stdout
+         rescue:
+            - debug: 
+                msg: "Java is there"     
+
+       - name: "Installing Hadoop"
+         command: "rpm -ivh {{ hadoop_file_name }} --force"
+         register: hadoop
+         when: java.rc == 0
+
+       - debug:
+           msg: hadoop.stdout
+       
+- hosts: MasterNode
+  vars_prompt:
+       - name: "masternode_directory"
+         prompt: "Enter the directory name for MasterNode: "
+         private: no
+       - name: "masternode_ip"
+         prompt: "Enter the IP for MasterNode: "
+         private: no
+  tasks:
+       - name: "Creating a masternode directory, to be shared"
+         file:
+             path: "/{{ masternode_directory }}"
+             state: directory 	
+       - name: "Setup MasterNode hdfs-site"
+         blockinfile:
+              path: "/etc/hadoop/hdfs-site.xml"
+              insertafter: "<configuration>"
+              block:
+                  <property>
+                  <name>dfs.name.dir</name>
+                  <value>/{{ masternode_directory }}</value>
+                  </property>
+
+       - name:  "Setup MasterNode core-site.xml"
+         blockinfile:
+              path: "/etc/hadoop/core-site.xml"
+              insertafter: "<configuration>"
+              block: 
+                  <property>
+                  <name>fs.default.name</name>
+                  <value>hdfs://{{ masternode_ip }}:9001</value>
+                  </property>
+
+       - block:
+              - name: "Formatting the Masternode Directory"
+                shell: "hadoop  namenode  -format -force"
+         rescue:
+              - debug:
+                   msg: "Already formatted!!"
+
+       - block:
+              - name: "Starting the Hadoop Service"
+                shell: "hadoop-daemon.sh  start namenode"
+
+         rescue: 
+              - debug:
+                   msg: "already there"
+
+       - name: "Checking for MasterNode service"
+         shell: "jps"
+         register: check
+    
+       - debug:
+             var: check
+       
+  
+- hosts: DataNodes
+  vars_prompt:
+       - name: "datanode_directory"
+         prompt: "Enter the directory name for DataNodes: "
+         private: no
+       - name: "master_ip"
+         prompt: "Enter the IP of MasterNode: "
+         private: no
+  tasks:
+       - name: "Creating a datanode directory, to be shared"
+         file:
+             path: "/{{ datanode_directory }}"
+             state: directory 	
+       - name: "Setup DataNodes hdfs-site.xml"
+         blockinfile:         
+              path: "/etc/hadoop/hdfs-site.xml"
+              insertafter: "<configuration>"
+              block:
+                  <property>
+                  <name>dfs.data.dir</name>
+                  <value>/{{ datanode_directory }}</value>
+                  </property>
+
+       - name:  "Setup DataNodes core-site.xml"
+         blockinfile:
+              path: "/etc/hadoop/core-site.xml"
+              insertafter: "<configuration>"
+              block: 
+                  <property>
+                  <name>fs.default.name</name>
+                  <value>hdfs://{{ master_ip }}:9001</value>
+                  </property>
+
+       - name: "Starting the datanode service"
+         shell: "hadoop-daemon.sh  start  datanode"
+    
+       - name: "Checking for DataNode service"
+         shell: "jps"
+         register: check
+    
+       - debug:
+             var: check
+
+       - name: "Checking Cluster Status"
+         shell: "hadoop dfsadmin -report"
+         register: status
+
+       - debug:
+             var: status
